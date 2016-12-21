@@ -16,20 +16,6 @@ import tempfile
 import shutil
 
 
-def write_file(iterable, output_filename):
-    with tempfile.TemporaryDirectory(
-            suffix='_tsv', prefix='tmp_', dir='/var/tmp') as temp_dir:
-        fname = write_str_into_file(iterable, temp_dir)
-        shutil.move(fname, output_filename)
-
-
-def write_str_into_file(iterable, dir_name):
-    with tempfile.NamedTemporaryFile(delete=False, dir=dir_name,) as f:
-        for row in iterable:
-            f.write(row)
-        return f.name
-
-
 class SignalException(Exception):
     def __init__(self, message):
         super(SignalException, self).__init__(message)
@@ -39,20 +25,29 @@ def do_exit(sig, stack):
     raise SignalException("Exiting")
 
 
-class ParseRowsTsv(object):
+class IterToFile(object):
 
-    def __init__(
-        self, file, inputf, outputf
-            ):
-        self.inputf = os.path.abspath(os.path.expanduser(inputf))
-        self.outputf = os.path.abspath(os.path.expanduser(outputf))
-        self.file = file
+    def __init__(self, iterable, output_filename):
+        self.iterable = iterable
+        self.output_filename = output_filename
 
-    def write_into_file(self):
-        if self.file == 'pickle':
-            write_file(self.pickle_tsv(), self.outputf)
-        elif self.file == 'struct':
-            write_file(self.struct_tsv(), self.outputf)
+    def write_file(self):
+        with tempfile.TemporaryDirectory(
+                suffix='_tsv', prefix='tmp_', dir='/var/tmp') as temp_dir:
+            fname = self.write_str_into_file(temp_dir)
+            shutil.move(fname, self.output_filename)
+
+    def write_str_into_file(self, dir_name):
+        with tempfile.NamedTemporaryFile(delete=False, dir=dir_name,) as f:
+            for row in self.iterable:
+                f.write(row)
+            return f.name
+
+
+class ReadTsvGenerator(object):
+
+    def __init__(self, inputf):
+        self.inputf = inputf
 
     def read_tsv(self):
         with open(self.inputf, "r") as f:
@@ -72,12 +67,17 @@ class ParseRowsTsv(object):
                 )
                 yield row
 
+
+class ParseTsvGenerator(object):
+    def __init__(self, iterable):
+        self.iterable = iterable
+
     def pickle_tsv(self):
-        for record in self.read_tsv():
+        for record in self.iterable:
             yield pickle.dumps(record)
 
     def struct_tsv(self):
-        lines = self.read_tsv()
+        lines = self.iterable
         line = lines.next()
         inits = struct.Struct(
             's '.join(
@@ -93,12 +93,27 @@ class ParseRowsTsv(object):
             yield s.pack(*record)
 
 
+class ParseRowsTsv(object):
+
+    def __init__(self, file, inputf, outputf):
+        self.file = file
+        self.inputf = os.path.abspath(os.path.expanduser(inputf))
+        self.outputf = os.path.abspath(os.path.expanduser(outputf))
+
+    def write_into_file(self):
+        parsetsv = ParseTsvGenerator(ReadTsvGenerator(self.inputf).read_tsv())
+        if self.file == 'pickle':
+            IterToFile(parsetsv.pickle_tsv(), self.outputf).write_file()
+        elif self.file == 'struct':
+            IterToFile(parsetsv.struct_tsv(), self.outputf).write_file()
+
+
 @click.command()
 @click.option(
     '--file', type=click.Choice(['pickle', 'struct']),
     default='pickle')
 @click.option('-i', '--inputf', default='~/kadai_1.tsv')
-@click.option('-o', '--outputf', default='~/zone/kadai_2v2.p')
+@click.option('-o', '--outputf', default='~/zone/kadai_2v3.p')
 def cmd(file, inputf, outputf):
     s = datetime.datetime.now()
     print(s + datetime.timedelta(0, 0, 0, 0, 0, 9))
